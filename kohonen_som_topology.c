@@ -22,6 +22,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 #ifdef _OPENMP  // check if OpenMP based parallellization is available
 #include <omp.h>
@@ -349,9 +350,340 @@ void kohonen_som(double **X, struct kohonen_array_3d *W, int num_samples,
 }
 
 /**
+ * Save SOM weights to file for later analysis
+ * \param[in] fname filename to save in
+ * \param[in] W weights matrix
+ * \returns 0 if all ok
+ * \returns -1 if file creation failed
+ */
+int save_som_weights(const char *fname, struct kohonen_array_3d *W)
+{
+    FILE *fp = fopen(fname, "wt");
+    if (!fp)
+    {
+        char msg[120];
+        sprintf(msg, "File error (%s): ", fname);
+        perror(msg);
+        return -1;
+    }
+    
+    // Save dimensions as header
+    fprintf(fp, "%d,%d,%d\n", W->dim1, W->dim2, W->dim3);
+    
+    // Save weights: each line is one neuron (x,y) with all features
+    for (int i = 0; i < W->dim1; i++)
+    {
+        for (int j = 0; j < W->dim2; j++)
+        {
+            for (int k = 0; k < W->dim3; k++)
+            {
+                double *w = kohonen_data_3d(W, i, j, k);
+                fprintf(fp, "%.6g", w[0]);
+                if (k < W->dim3 - 1)
+                    fputc(',', fp);
+            }
+            fputc('\n', fp);
+        }
+    }
+    fclose(fp);
+    return 0;
+}
+
+/**
  * @}
  * @}
  */
+
+/* ========== FUNÇÕES PARA PROCESSAR DADOS DO BANKING ========== */
+
+/**
+ * Remove aspas de uma string
+ */
+void remove_quotes(char *str)
+{
+    int i, j = 0;
+    for (i = 0; str[i]; i++)
+    {
+        if (str[i] != '"')
+        {
+            str[j++] = str[i];
+        }
+    }
+    str[j] = '\0';
+}
+
+/**
+ * Converte valor categórico para numérico
+ * Retorna -1 se for "unknown" ou valor inválido
+ */
+double categorical_to_numeric(const char *value, const char **categories, int num_categories)
+{
+    if (!value) return -1.0;
+    
+    // Criar cópia para remover aspas sem modificar original
+    char temp[256];
+    strncpy(temp, value, sizeof(temp) - 1);
+    temp[sizeof(temp) - 1] = '\0';
+    remove_quotes(temp);
+    
+    if (strcmp(temp, "unknown") == 0 || strcmp(temp, "") == 0)
+        return -1.0;
+    
+    for (int i = 0; i < num_categories; i++)
+    {
+        if (strcmp(temp, categories[i]) == 0)
+            return (double)i;
+    }
+    return -1.0;
+}
+
+/**
+ * Normaliza dados usando min-max scaling
+ * \param[in,out] X matriz de dados
+ * \param[in] num_samples número de amostras
+ * \param[in] num_features número de features
+ */
+void normalize_data(double **X, int num_samples, int num_features)
+{
+    // Encontrar min e max para cada feature
+    double *min_vals = (double *)malloc(num_features * sizeof(double));
+    double *max_vals = (double *)malloc(num_features * sizeof(double));
+    
+    for (int j = 0; j < num_features; j++)
+    {
+        min_vals[j] = INFINITY;
+        max_vals[j] = -INFINITY;
+        
+        for (int i = 0; i < num_samples; i++)
+        {
+            if (X[i][j] < min_vals[j])
+                min_vals[j] = X[i][j];
+            if (X[i][j] > max_vals[j])
+                max_vals[j] = X[i][j];
+        }
+    }
+    
+    // Normalizar: (x - min) / (max - min)
+#ifdef _OPENMP
+#pragma omp parallel for
+#endif
+    for (int i = 0; i < num_samples; i++)
+    {
+        for (int j = 0; j < num_features; j++)
+        {
+            double range = max_vals[j] - min_vals[j];
+            if (range > 1e-10)  // evitar divisão por zero
+            {
+                X[i][j] = (X[i][j] - min_vals[j]) / range;
+            }
+            else
+            {
+                X[i][j] = 0.0;
+            }
+        }
+    }
+    
+    free(min_vals);
+    free(max_vals);
+}
+
+/**
+ * Lê dados do arquivo CSV do banking market
+ * \param[in] filename nome do arquivo CSV
+ * \param[out] num_samples número de amostras lidas
+ * \param[out] num_features número de features
+ * \returns matriz de dados alocada dinamicamente
+ */
+double **load_banking_data(const char *filename, int *num_samples, int *num_features)
+{
+    FILE *fp = fopen(filename, "r");
+    if (!fp)
+    {
+        fprintf(stderr, "Erro ao abrir arquivo: %s\n", filename);
+        return NULL;
+    }
+    
+    // Pular cabeçalho
+    char header[2048];
+    if (fgets(header, sizeof(header), fp) == NULL)
+    {
+        fclose(fp);
+        return NULL;
+    }
+    
+    // Contar linhas (aproximado)
+    int line_count = 0;
+    char buffer[2048];
+    while (fgets(buffer, sizeof(buffer), fp))
+        line_count++;
+    
+    rewind(fp);
+    fgets(header, sizeof(header), fp);  // pular cabeçalho novamente
+    
+    // Features selecionadas para análise
+    // Vamos usar: age, balance, duration, campaign, previous
+    // E converter: default (no=0, yes=1), housing (no=0, yes=1), loan (no=0, yes=1)
+    *num_features = 8;  // age, balance, duration, campaign, previous, default, housing, loan
+    *num_samples = line_count;
+    
+    // Alocar matriz
+    double **X = (double **)malloc(*num_samples * sizeof(double *));
+    for (int i = 0; i < *num_samples; i++)
+    {
+        X[i] = (double *)malloc(*num_features * sizeof(double));
+    }
+    
+    // Categorias para conversão
+    const char *default_cats[] = {"no", "yes"};
+    const char *housing_cats[] = {"no", "yes"};
+    const char *loan_cats[] = {"no", "yes"};
+    
+    // Ler dados
+    int sample_idx = 0;
+    while (fgets(buffer, sizeof(buffer), fp) && sample_idx < *num_samples)
+    {
+        // Processar linha manualmente (compatível com Windows)
+        char *line = buffer;
+        int col = 0;
+        char *start = line;
+        
+        while (*line && sample_idx < *num_samples)
+        {
+            if (*line == ';' || *line == '\n' || *line == '\r')
+            {
+                *line = '\0';
+                
+                // Processar coluna baseado no índice
+                if (col == 0)  // age
+                {
+                    remove_quotes(start);
+                    X[sample_idx][0] = atof(start);
+                }
+                else if (col == 4)  // default
+                {
+                    X[sample_idx][5] = categorical_to_numeric(start, default_cats, 2);
+                }
+                else if (col == 5)  // balance
+                {
+                    remove_quotes(start);
+                    X[sample_idx][1] = atof(start);
+                }
+                else if (col == 6)  // housing
+                {
+                    X[sample_idx][6] = categorical_to_numeric(start, housing_cats, 2);
+                }
+                else if (col == 7)  // loan
+                {
+                    X[sample_idx][7] = categorical_to_numeric(start, loan_cats, 2);
+                }
+                else if (col == 11)  // duration
+                {
+                    remove_quotes(start);
+                    X[sample_idx][2] = atof(start);
+                }
+                else if (col == 12)  // campaign
+                {
+                    remove_quotes(start);
+                    X[sample_idx][3] = atof(start);
+                }
+                else if (col == 14)  // previous
+                {
+                    remove_quotes(start);
+                    X[sample_idx][4] = atof(start);
+                }
+                
+                if (*line == '\n' || *line == '\r')
+                    break;
+                    
+                start = line + 1;
+                col++;
+            }
+            line++;
+        }
+        
+        sample_idx++;
+    }
+    
+    *num_samples = sample_idx;  // ajustar número real de amostras
+    fclose(fp);
+    
+    printf("Carregados %d amostras com %d features\n", *num_samples, *num_features);
+    printf("Features: age, balance, duration, campaign, previous, default, housing, loan\n");
+    
+    return X;
+}
+
+/**
+ * Teste com dados do banking market
+ */
+void test_banking()
+{
+    int num_samples, num_features;
+    int num_out = 30;  // tamanho do mapa SOM (30x30)
+    
+    printf("\n=== Processando dados do Banking Market ===\n");
+    
+    // Carregar dados
+    double **X = load_banking_data("banking_market/train.csv", &num_samples, &num_features);
+    if (!X)
+    {
+        fprintf(stderr, "Erro ao carregar dados!\n");
+        return;
+    }
+    
+    // Normalizar dados
+    printf("Normalizando dados...\n");
+    normalize_data(X, num_samples, num_features);
+    
+    // Salvar dados normalizados
+    save_2d_data("banking_data_normalized.csv", X, num_samples, num_features);
+    printf("Dados normalizados salvos em: banking_data_normalized.csv\n");
+    
+    // Criar estrutura SOM
+    struct kohonen_array_3d W;
+    W.dim1 = num_out;
+    W.dim2 = num_out;
+    W.dim3 = num_features;
+    W.data = (double *)malloc(num_out * num_out * num_features * sizeof(double));
+    
+    // Inicializar pesos aleatoriamente
+    printf("Inicializando pesos do SOM...\n");
+    for (int i = 0; i < num_out; i++)
+    {
+        for (int k = 0; k < num_out; k++)
+        {
+            for (int j = 0; j < num_features; j++)
+            {
+                double *w = kohonen_data_3d(&W, i, k, j);
+                w[0] = _random(0, 1);  // valores normalizados entre 0 e 1
+            }
+        }
+    }
+    
+    // Salvar U-matrix inicial
+    save_u_matrix("banking_w_before.csv", &W);
+    printf("U-matrix inicial salva em: banking_w_before.csv\n");
+    
+    // Treinar SOM
+    printf("Treinando SOM...\n");
+    kohonen_som(X, &W, num_samples, num_features, num_out, 1e-4);
+    
+    // Salvar U-matrix treinada
+    save_u_matrix("banking_w_after.csv", &W);
+    printf("U-matrix treinada salva em: banking_w_after.csv\n");
+    
+    // Salvar pesos do SOM para análise posterior
+    save_som_weights("banking_weights.csv", &W);
+    printf("Pesos do SOM salvos em: banking_weights.csv\n");
+    
+    // Limpar memória
+    for (int i = 0; i < num_samples; i++)
+        free(X[i]);
+    free(X);
+    free(W.data);
+    
+    printf("=== Processamento concluído! ===\n\n");
+}
 
 /** Creates a random set of points distributed in four clusters in
  * 3D space with centroids at the points
@@ -673,6 +1005,19 @@ int main(int argc, char **argv)
 #else
     printf("NOT using OpenMP based parallelization\n");
 #endif
+    
+    // Se argumento "banking" for passado, processa dados do banking
+    if (argc > 1 && strcmp(argv[1], "banking") == 0)
+    {
+        clock_t start_clk = clock();
+        test_banking();
+        clock_t end_clk = clock();
+        printf("Banking test completed in %.4g sec\n",
+               get_clock_diff(start_clk, end_clk));
+        return 0;
+    }
+    
+    // Caso contrário, executa testes originais
     clock_t start_clk, end_clk;
 
     start_clk = clock();
@@ -693,6 +1038,7 @@ int main(int argc, char **argv)
     printf("Test 3 completed in %.4g sec\n",
            get_clock_diff(start_clk, end_clk));
 
-    printf("(Note: Calculated times include: writing files to disk.)\n\n");
+    printf("(Note: Calculated times include: writing files to disk.)\n");
+    printf("\nPara processar dados do banking, execute: ./som_topology banking\n\n");
     return 0;
 }
