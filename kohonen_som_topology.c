@@ -315,6 +315,7 @@ double kohonen_update_weights(const double *X, struct kohonen_array_3d *W,
 void kohonen_som(double **X, struct kohonen_array_3d *W, int num_samples,
                  int num_features, int num_out, double alpha_min)
 {
+    clock_t start_training = clock();  // Início do treinamento
     int R = num_out >> 2, iter = 0;
     double **D = (double **)malloc(num_out * sizeof(double *));
     for (int i = 0; i < num_out; i++)
@@ -344,6 +345,11 @@ void kohonen_som(double **X, struct kohonen_array_3d *W, int num_samples,
                dmin);
     }
     putchar('\n');
+
+    clock_t end_training = clock();  // Fim do treinamento
+    double training_time = get_clock_diff(start_training, end_training);
+    printf("⏱️  Tempo de treinamento: %.2f segundos (%.2f minutos)\n", 
+           training_time, training_time / 60.0);
 
     for (int i = 0; i < num_out; i++) free(D[i]);
     free(D);
@@ -618,22 +624,31 @@ double **load_banking_data(const char *filename, int *num_samples, int *num_feat
  */
 void test_banking()
 {
+    clock_t start_total = clock();  // Início do processamento total
     int num_samples, num_features;
     int num_out = 30;  // tamanho do mapa SOM (30x30)
     
     printf("\n=== Processando dados do Banking Market ===\n");
     
     // Carregar dados
+    clock_t start_load = clock();
     double **X = load_banking_data("banking_market/train.csv", &num_samples, &num_features);
     if (!X)
     {
         fprintf(stderr, "Erro ao carregar dados!\n");
         return;
     }
+    clock_t end_load = clock();
+    double load_time = get_clock_diff(start_load, end_load);
+    printf("⏱️  Tempo de carregamento: %.2f segundos\n", load_time);
     
     // Normalizar dados
     printf("Normalizando dados...\n");
+    clock_t start_norm = clock();
     normalize_data(X, num_samples, num_features);
+    clock_t end_norm = clock();
+    double norm_time = get_clock_diff(start_norm, end_norm);
+    printf("⏱️  Tempo de normalização: %.2f segundos\n", norm_time);
     
     // Salvar dados normalizados
     save_2d_data("banking_data_normalized.csv", X, num_samples, num_features);
@@ -648,6 +663,7 @@ void test_banking()
     
     // Inicializar pesos aleatoriamente
     printf("Inicializando pesos do SOM...\n");
+    clock_t start_init = clock();
     for (int i = 0; i < num_out; i++)
     {
         for (int k = 0; k < num_out; k++)
@@ -659,22 +675,37 @@ void test_banking()
             }
         }
     }
+    clock_t end_init = clock();
+    double init_time = get_clock_diff(start_init, end_init);
+    printf("⏱️  Tempo de inicialização: %.2f segundos\n", init_time);
     
     // Salvar U-matrix inicial
+    clock_t start_save1 = clock();
     save_u_matrix("banking_w_before.csv", &W);
+    clock_t end_save1 = clock();
+    double save1_time = get_clock_diff(start_save1, end_save1);
     printf("U-matrix inicial salva em: banking_w_before.csv\n");
+    printf("⏱️  Tempo de salvamento (antes): %.2f segundos\n", save1_time);
     
     // Treinar SOM
     printf("Treinando SOM...\n");
     kohonen_som(X, &W, num_samples, num_features, num_out, 1e-4);
     
     // Salvar U-matrix treinada
+    clock_t start_save2 = clock();
     save_u_matrix("banking_w_after.csv", &W);
+    clock_t end_save2 = clock();
+    double save2_time = get_clock_diff(start_save2, end_save2);
     printf("U-matrix treinada salva em: banking_w_after.csv\n");
+    printf("⏱️  Tempo de salvamento (depois): %.2f segundos\n", save2_time);
     
     // Salvar pesos do SOM para análise posterior
+    clock_t start_save3 = clock();
     save_som_weights("banking_weights.csv", &W);
+    clock_t end_save3 = clock();
+    double save3_time = get_clock_diff(start_save3, end_save3);
     printf("Pesos do SOM salvos em: banking_weights.csv\n");
+    printf("⏱️  Tempo de salvamento (pesos): %.2f segundos\n", save3_time);
     
     // Limpar memória
     for (int i = 0; i < num_samples; i++)
@@ -682,6 +713,29 @@ void test_banking()
     free(X);
     free(W.data);
     
+    // Tempo total
+    clock_t end_total = clock();
+    double total_time = get_clock_diff(start_total, end_total);
+    
+    // Calcular tempo de treinamento (subtrair outros tempos)
+    double training_time = total_time - load_time - norm_time - init_time - save1_time - save2_time - save3_time;
+    
+    printf("\n");
+    printf("============================================================\n");
+    printf("📊 RESUMO DE TEMPOS DE EXECUÇÃO\n");
+    printf("============================================================\n");
+    printf("  Carregamento de dados:     %8.2f segundos\n", load_time);
+    printf("  Normalização:              %8.2f segundos\n", norm_time);
+    printf("  Inicialização de pesos:    %8.2f segundos\n", init_time);
+    printf("  Salvamento (antes):        %8.2f segundos\n", save1_time);
+    printf("  Treinamento do SOM:        %8.2f segundos (%.2f minutos)\n", 
+           training_time, training_time / 60.0);
+    printf("  Salvamento (depois):       %8.2f segundos\n", save2_time);
+    printf("  Salvamento (pesos):        %8.2f segundos\n", save3_time);
+    printf("  ------------------------------------------------------------\n");
+    printf("  TEMPO TOTAL:               %8.2f segundos (%.2f minutos)\n", 
+           total_time, total_time / 60.0);
+    printf("============================================================\n");
     printf("=== Processamento concluído! ===\n\n");
 }
 
