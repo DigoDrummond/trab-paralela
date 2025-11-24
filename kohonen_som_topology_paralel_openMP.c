@@ -7,43 +7,49 @@
  * Dataset: Banking Market (45211 amostras, 8 features)
  * 
  * COMPILAÇÃO:
- * gcc -fopenmp -O3 kohonen_som_topology_paralel_openMP.c -o som_openmp -lm
+ * gcc -fopenmp -O3 -march=native kohonen_som_topology_paralel_openMP.c -o som_parallel -lm
  * 
  * EXECUÇÃO:
- * ./som_openmp banking [num_threads]     - Processar banking com N threads
- * ./som_openmp benchmark                  - Benchmark completo 1-32 threads
+ * ./som_parallel banking [num_threads]     - Processar banking com N threads
+ * ./som_parallel benchmark                  - Benchmark completo 1-32 threads
  * 
  * RESULTADOS DE BENCHMARK:
  * ================================================================
- * Hardware: [PREENCHER APÓS EXECUÇÃO]
- * Sistema: [PREENCHER]
- * Compilador: GCC com -fopenmp
+ * Hardware: CPU com 8 threads (Windows)
+ * Sistema: Windows 11
+ * Compilador: GCC 11.2.0 com -fopenmp -O3 -march=native
+ * Dataset: 45211 amostras, 1000 iterações de treinamento
  * 
- * TEMPOS DE EXECUÇÃO (treinamento):
- * Sequencial:      [PREENCHER] seg (baseline - 1 thread)
+ * TEMPOS DE EXECUÇÃO (apenas treinamento SOM):
+ * Sequencial (sem OpenMP): 2351.51 segundos (39.19 minutos) sem flag -o3
  * 
- * OpenMP CPU:
- * - 1 thread:      [PREENCHER] seg | Speedup: 1.00x | Eficiência: 100%
- * - 2 threads:     [PREENCHER] seg | Speedup: X.XXx | Eficiência: XX%
- * - 4 threads:     [PREENCHER] seg | Speedup: X.XXx | Eficiência: XX%
- * - 8 threads:     [PREENCHER] seg | Speedup: X.XXx | Eficiência: XX%
- * - 16 threads:    [PREENCHER] seg | Speedup: X.XXx | Eficiência: XX%
- * - 32 threads:    [PREENCHER] seg | Speedup: X.XXx | Eficiência: XX%
+ * OpenMP CPU (com paralelização):
+ * - 1 thread:    489.67 seg | Speedup: 1.00x | Eficiência: 100.0% com flag -o3
+ * - 2 threads:   266.60 seg | Speedup: 1.84x | Eficiência: 91.9%
+ * - 4 threads:   170.19 seg | Speedup: 2.88x | Eficiência: 71.9%
+ * - 8 threads:   129.47 seg | Speedup: 3.78x | Eficiência: 47.3%
  * 
- * MELHOR CONFIGURAÇÃO: [PREENCHER] threads (speedup [PREENCHER]x)
+ * MELHOR CONFIGURAÇÃO: 8 threads (speedup 3.78x)
+ * Ganho: 18.16x mais rápido que versão sequencial (sem OpenMP)
  * ================================================================
+ * 
+ * ANÁLISE DE PERFORMANCE:
+ * - Speedup quase linear até 2 threads (eficiência > 90%)
+ * - Boa escalabilidade até 4 threads (eficiência ~72%)
+ * - Speedup continua melhorando em 8 threads mas eficiência cai
+ * - Limitações: race conditions (atomic), alocação de memória, cache
  * 
  * MUDANÇAS PARA PARALELIZAÇÃO:
  * 1. Adicionado omp_get_wtime() para medição precisa de tempo
  * 2. Paralelizado loop de amostras em kohonen_som() - PRINCIPAL
  *    - Cada thread processa subconjunto de amostras
- *    - Cada thread tem sua própria matriz D local
+ *    - Cada thread tem sua própria matriz D local (evita contenção)
  *    - schedule(dynamic, 100) para balanceamento de carga
  * 3. Paralelizado normalização com redução manual (min/max)
  * 4. Paralelizado U-matrix com reduction(+:distance)
- * 5. Adicionado atomic em atualização de pesos (race condition)
+ * 5. Adicionado atomic em atualização de pesos (protege race condition)
  * 6. Adicionada função benchmark_openmp() - testa 1-32 threads
- * 7. Matriz D é alocada localmente por thread (evita contenção)
+ * 7. Prints detalhados mostrando threads ativas durante execução
  */
 #define _USE_MATH_DEFINES
  #include <math.h>
@@ -339,7 +345,7 @@ void kohonen_som(double **X, struct kohonen_array_3d *W, int num_samples,
     printf("\n>> Iniciando treinamento com %d threads OpenMP\n", num_threads);
     printf(">> Dataset: %d amostras, %d features, SOM %dx%d\n", 
            num_samples, num_features, num_out, num_out);
-    printf("═══════════════════════════════════════════════════════════\n\n");
+    printf("==================================================\n\n");
 #else
     clock_t start_training = clock();
     printf("\n>> AVISO: Executando versão SEQUENCIAL (sem OpenMP)\n\n");
@@ -421,12 +427,12 @@ void kohonen_som(double **X, struct kohonen_array_3d *W, int num_samples,
         if (iter % 100 == 0)
         {
 #ifdef _OPENMP
-            printf("\n┌─────────────────────────────────────────────────────────┐\n");
+            printf("\n==================================================\n");
             printf("│ Iter: %5d | α: %.4f | R: %2d | d_min: %.6f │\n", 
                    iter, alpha, R, dmin);
             printf("│ Tempo/iter: %.3f seg | Threads: %d ativas        │\n", 
                    iter_time, num_threads);
-            printf("└─────────────────────────────────────────────────────────┘\n");
+            printf("==================================================\n");
 #else
             printf("Iter: %5d | α: %.4g | R: %d | d_min: %.4g\n", 
                    iter, alpha, R, dmin);
@@ -441,23 +447,23 @@ void kohonen_som(double **X, struct kohonen_array_3d *W, int num_samples,
     }
     
     printf("\n\n");
-    printf("═══════════════════════════════════════════════════════════\n");
+    printf("==================================================\n");
     printf(">> Treinamento completo: %d iterações\n", iter);
 
 #ifdef _OPENMP
     double end_training = omp_get_wtime();
     double training_time = end_training - start_training;
     
-    printf("═══════════════════════════════════════════════════════════\n");
+    printf("==================================================\n");
     printf("TEMPO DE TREINAMENTO\n");
-    printf("═══════════════════════════════════════════════════════════\n");
+    printf("==================================================\n");
     printf("  Threads utilizadas:  %d\n", num_threads);
     printf("  Tempo total:         %.2f segundos\n", training_time);
     printf("  Tempo médio/iter:    %.4f segundos\n", training_time / iter);
     printf("  Amostras/segundo:    %.0f\n", (num_samples * iter) / training_time);
     printf("  Throughput:          %.2f Msamples/s\n", 
            (num_samples * iter) / (training_time * 1000000));
-    printf("═══════════════════════════════════════════════════════════\n\n");
+    printf("==================================================\n\n");
 #else
     clock_t end_training = clock();
     double training_time = get_clock_diff(start_training, end_training);
@@ -787,9 +793,9 @@ void test_banking()
     int num_out = 30;
     
     printf("\n");
-    printf("╔═══════════════════════════════════════════════════════════╗\n");
-    printf("║     KOHONEN SOM - BANKING MARKET CLUSTERING              ║\n");
-    printf("╚═══════════════════════════════════════════════════════════╝\n");
+    printf("==================================================\n");
+    printf("     KOHONEN SOM - BANKING MARKET CLUSTERING               \n");
+    printf("==================================================\n");
 #ifdef _OPENMP
     printf("  Configuracao OpenMP: %d threads disponiveis\n", omp_get_max_threads());
 #else
@@ -879,18 +885,19 @@ void test_banking()
     double total_time = get_clock_diff(start_total, end_total);
 #endif
     
-    printf("╔═══════════════════════════════════════════════════════════╗\n");
-    printf("║                   PROCESSAMENTO CONCLUIDO                 ║\n");
-    printf("╠═══════════════════════════════════════════════════════════╣\n");
-    printf("║  Tempo total: %.2f segundos (%.2f minutos)            ║\n", 
+    printf("\n");
+    printf("==================================================\n");
+    printf("                   PROCESSAMENTO CONCLUIDO                  \n");
+    printf("==================================================\n");
+    printf("  Tempo total: %.2f segundos (%.2f minutos)             \n", 
            total_time, total_time / 60.0);
 #ifdef _OPENMP
-    printf("║  Threads:     %d OpenMP threads                       ║\n", 
+    printf("  Threads:     %d OpenMP threads                        \n", 
            omp_get_max_threads());
-    printf("║  Performance: %.0f%% uso estimado de CPU              ║\n",
+    printf("  Performance: %.0f%% uso estimado de CPU               \n",
            (omp_get_max_threads() * 100.0 / omp_get_num_procs()) * 90);
 #endif
-    printf("╚═══════════════════════════════════════════════════════════╝\n\n");
+    printf("==================================================\n\n");
 }
  
  /** Creates a random set of points distributed in four clusters in
@@ -1213,22 +1220,22 @@ void benchmark_openmp()
     double times[6];
     
     printf("\n");
-    printf("╔═══════════════════════════════════════════════════════════╗\n");
-    printf("║            BENCHMARK OPENMP - KOHONEN SOM                 ║\n");
-    printf("╠═══════════════════════════════════════════════════════════╣\n");
-    printf("║  Dataset: 45211 amostras, 8 features                     ║\n");
-    printf("║  Topologia: SOM 30x30 (900 neurônios)                    ║\n");
-    printf("║  Testes: 1, 2, 4, 8, 16, 32 threads                      ║\n");
-    printf("╚═══════════════════════════════════════════════════════════╝\n");
+    printf("==================================================\n");
+    printf("            BENCHMARK OPENMP - KOHONEN SOM                  \n");
+    printf("==================================================\n");
+    printf("  Dataset: 45211 amostras, 8 features                      \n");
+    printf("  Topologia: SOM 30x30 (900 neurônios)                     \n");
+    printf("  Testes: 1, 2, 4, 8, 16, 32 threads                       \n");
+    printf("==================================================\n");
     
     for (int i = 0; i < num_tests; i++)
     {
         int num_threads = thread_counts[i];
         
         printf("\n");
-        printf("┌───────────────────────────────────────────────────────────┐\n");
-        printf("│ TESTE %d/6: %d THREAD(S)                                  │\n", i+1, num_threads);
-        printf("└───────────────────────────────────────────────────────────┘\n");
+        printf("==================================================\n");
+        printf(" TESTE %d/6: %d THREAD(S)                                   \n", i+1, num_threads);
+        printf("==================================================\n");
         
 #ifdef _OPENMP
         omp_set_num_threads(num_threads);
@@ -1248,19 +1255,19 @@ void benchmark_openmp()
 #endif
         
         printf("\n>> Teste %d concluido: %.2f segundos\n", i+1, times[i]);
-        printf("═══════════════════════════════════════════════════════════\n");
+        printf("==================================================\n");
     }
     
     double baseline = times[0];
     
     printf("\n\n");
-    printf("╔═══════════════════════════════════════════════════════════╗\n");
-    printf("║              RESULTADOS DO BENCHMARK                      ║\n");
-    printf("╠═══════════════════════════════════════════════════════════╣\n");
-    printf("║ Baseline: %.2f segundos (1 thread)                      ║\n", baseline);
-    printf("╠═══════════════════════════════════════════════════════════╣\n");
-    printf("║ Threads │  Tempo (s) │ Speedup │ Eficiência             ║\n");
-    printf("╠─────────┼────────────┼─────────┼────────────────────────╣\n");
+    printf("==================================================\n");
+    printf("              RESULTADOS DO BENCHMARK                       \n");
+    printf("==================================================\n");
+    printf(" Baseline: %.2f segundos (1 thread)                       \n", baseline);
+    printf("==================================================\n");
+    printf(" Threads │  Tempo (s) │ Speedup │ Eficiência              \n");
+    printf("==================================================\n");
     
     for (int i = 0; i < num_tests; i++)
     {
@@ -1274,11 +1281,11 @@ void benchmark_openmp()
         else if (efficiency >= 50) indicator = '-';
         else indicator = '.';
         
-        printf("║   %2d    │  %8.2f  │  %5.2fx  │  %6.1f%%  %c         ║\n",
+        printf("   %2d    │  %8.2f  │  %5.2fx  │  %6.1f%%  %c          \n",
                thread_counts[i], times[i], speedup, efficiency, indicator);
     }
     
-    printf("╚═══════════════════════════════════════════════════════════╝\n");
+    printf("==================================================\n");
     
     // Encontrar melhor configuração
     int best_idx = 0;
@@ -1293,7 +1300,7 @@ void benchmark_openmp()
         }
     }
     
-    printf("\n>> MELHOR CONFIGURACAO: %d threads\n", thread_counts[best_idx]);
+    printf("\n MELHOR CONFIGURACAO: %d threads\n", thread_counts[best_idx]);
     printf("   Speedup: %.2fx | Eficiencia: %.1f%%\n", 
            best_speedup, (best_speedup / thread_counts[best_idx]) * 100);
     printf("   Tempo: %.2f segundos (%.1fx mais rapido)\n\n", 
