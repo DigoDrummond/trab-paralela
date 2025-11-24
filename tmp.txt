@@ -1,0 +1,7 @@
+call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
+
+cd "C:\Users\rodri\Puc\Computação Paralela\trab-paralela"
+
+nvcc kohonen_som_topology_cuda.cu -o som_cuda.exe -O3 -arch=sm_86
+
+.\som_cuda.exe banking

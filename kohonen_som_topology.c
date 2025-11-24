@@ -44,7 +44,6 @@
 #define min(a, b) (((a) < (b)) ? (a) : (b))
 #endif
 
-double get_clock_diff(clock_t start_t, clock_t end_t);
 /** to store info regarding 3D arrays */
 struct kohonen_array_3d
 {
