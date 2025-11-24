@@ -22,16 +22,17 @@ O **Self-Organizing Map (SOM)** é uma rede neural artificial que:
 
 ```
 trab-paralela/
-├── kohonen_som_topology.c      # Implementação principal do SOM
-├── kohonen_som_trace.c         # Implementação alternativa (cadeia 1D)
-├── analyze_banking_clusters.py  # Script Python para análise e visualização
+├── kohonen_som_topology.c               # Implementação sequencial do SOM
+├── kohonen_som_topology_paralel_openMP.c # Implementação OpenMP (multicore)
+├── kohonen_som_trace.c                  # Implementação alternativa (cadeia 1D)
+├── analyze_banking_clusters.py          # Script Python para análise e visualização
 ├── banking_market/
-│   ├── train.csv               # Dados de treinamento (45.213 clientes)
-│   └── test.csv                # Dados de teste (4.523 clientes)
-├── banking_w_before.csv        # U-Matrix antes do treinamento
-├── banking_w_after.csv         # U-Matrix depois do treinamento ⭐
-├── banking_data_normalized.csv # Dados normalizados
-└── README.md                   # Este arquivo
+│   ├── train.csv                        # Dados de treinamento (45.213 clientes)
+│   └── test.csv                         # Dados de teste (4.523 clientes)
+├── banking_w_before.csv                 # U-Matrix antes do treinamento
+├── banking_w_after.csv                  # U-Matrix depois do treinamento ⭐
+├── banking_data_normalized.csv          # Dados normalizados
+└── README.md                            # Este arquivo
 ```
 
 ## 🚀 Como Executar
@@ -41,21 +42,80 @@ trab-paralela/
 - **Compilador C** com suporte a OpenMP (GCC, Clang, ou MinGW)
 - **Python 3** com bibliotecas: `numpy`, `matplotlib`, `pandas`, `scipy` (opcional)
 
-### 1. Compilar o Código
+---
+
+## ⚡ VERSÃO PARALELA OPENMP (CPU MULTICORE)
+
+### 1. Compilar a Versão Paralela
+
+```bash
+gcc -fopenmp -O3 -march=native kohonen_som_topology_paralel_openMP.c -o som_parallel -lm
+```
+
+### 2. Executar com N threads
+
+```bash
+./som_parallel banking 8        # Usar 8 threads
+./som_parallel banking 4        # Usar 4 threads
+```
+
+### 3. Resultados de Performance
+
+**Dataset:** 45.211 amostras, 1000 iterações, SOM 30x30
+
+| Configuração | Tempo (segundos) | Speedup | Eficiência |
+|-------------|------------------|---------|------------|
+| **Sequencial (sem OpenMP)** | 2351.51 seg | - | - |
+| **1 thread (com -O3)** | 489.67 seg | 1.00x | 100.0% |
+| **2 threads** | 266.60 seg | 1.84x | 91.9% |
+| **4 threads** | 170.19 seg | 2.88x | 71.9% |
+| **8 threads** | 129.47 seg | **3.78x** | 47.3% |
+
+**Melhor configuração:** 8 threads com speedup de **3.78x**
+
+**Ganho total:** **18.16x** mais rápido que a versão sequencial (sem otimizações)
+
+### 4. Análise de Performance
+
+-  **Speedup quase linear até 2 threads** (eficiência > 90%)
+-  **Boa escalabilidade até 4 threads** (eficiência ~72%)
+-  **Speedup continua em 8 threads, mas eficiência cai** devido a:
+  - Race conditions protegidas com `#pragma omp atomic`
+  - Overhead de sincronização entre threads
+  - Contenção de memória e cache
+
+### 5. Mudanças de Paralelização Implementadas
+
+1. **Medição precisa de tempo** com `omp_get_wtime()`
+2. **Loop principal paralelizado** em `kohonen_som()`:
+   - Cada thread processa subconjunto de amostras
+   - Cada thread tem matriz D local (evita contenção)
+   - `schedule(dynamic, 100)` para balanceamento de carga
+3. **Normalização paralelizada** com redução manual (min/max)
+4. **U-matrix paralelizada** com `reduction(+:distance)`
+5. **Atualização de pesos protegida** com `#pragma omp atomic`
+6. **Função de benchmark** que testa 1-32 threads automaticamente
+7. **Prints detalhados** mostrando threads ativas em tempo real
+
+---
+
+## 📘 VERSÃO SEQUENCIAL (Original)
+
+### 1. Compilar o Código Sequencial
 
 #### Linux/Mac:
 ```bash
-gcc kohonen_som_topology.c -o som_topology -fopenmp -lm
+gcc kohonen_som_topology.c -o som_topology -lm
 ```
 
 #### Windows (MinGW):
 ```bash
-gcc kohonen_som_topology.c -o som_topology.exe -fopenmp -lm
+gcc kohonen_som_topology.c -o som_topology.exe -lm
 ```
 
 #### Windows (MSVC):
 ```bash
-cl kohonen_som_topology.c /openmp
+cl kohonen_som_topology.c
 ```
 
 ### 2. Executar o Treinamento
@@ -261,9 +321,24 @@ Este projeto é para fins educacionais.
 
 ## 🚀 Quick Start
 
+### Versão Paralela (Recomendada - 18x mais rápida!)
+
+```bash
+# 1. Compilar com otimizações
+gcc -fopenmp -O3 -march=native kohonen_som_topology_paralel_openMP.c -o som_parallel -lm
+
+# 2. Executar com 8 threads
+./som_parallel banking 8
+
+# 4. Visualizar resultados
+python analyze_banking_clusters.py
+```
+
+### Versão Sequencial
+
 ```bash
 # 1. Compilar
-gcc kohonen_som_topology.c -o som_topology -fopenmp -lm
+gcc kohonen_som_topology.c -o som_topology -lm
 
 # 2. Executar
 ./som_topology banking
