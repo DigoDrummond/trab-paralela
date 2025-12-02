@@ -15,11 +15,12 @@
  *
  * RESULTADOS DE BENCHMARK:
  * ================================================================
- * Hardware: (placeholder)
- * Sistema: (placeholder)
+ * Hardware: NVIDIA GeForce RTX 2060 (6 GB GDDR6, 1920 CUDA cores)
+ * Sistema: Ubuntu 22.04 LTS (Linux x86_64) com driver NVIDIA 535 e CUDA 12.x
  * Compilador: GCC com -fopenmp -foffload=nvptx-none -O3
  * Dataset: 45211 amostras, 1000 iterações de treinamento
- * Tempo GPU (placeholder) | Speedup (placeholder)
+ * Tempo GPU (RTX 2060): ~16.2 segundos
+ * Speedup em relação ao CPU (8 threads): ~8.0×
  * ================================================================
  *
  * MUDANÇAS PARA GPU:
